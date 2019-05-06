@@ -1,0 +1,490 @@
+---
+title: ""
+author: ""
+date: ""
+output: 
+  html_document:
+    code_folding: show
+    code_download: true
+    toc: true                  # table of content true
+    toc_depth: 3               # upto three depths of headings (specified by #, ## and ###)
+    toc_float: true
+    number_sections: true     # if you want number sections at each table header
+    theme: united              # many options for theme, this one is my favorite.
+    highlight: tango           # specifies the syntax highlighting style
+    #css: my.css               # you can add your custom css, should be in same folder
+---
+
+# Set up misc {.tabset}
+ 
+## remove scientific notation in printing 
+```{r}
+options(scipen=999)
+```
+
+
+## Download dependencies
+
+```
+# InstaLoad packages (update none of the dependencies)
+
+# Download
+
+## Bioconductory packages
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+  BiocManager::install("Biobase")
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+  BiocManager::install("CLL")
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("limma")
+
+## util packages (EDA, dataviz)
+if (!require("skimr")) install.packages("skim")
+if (!require("devtools")) install.packages("devtools")
+if (!require("dplyr")) install.packages("dplyr") 
+if (!require("RColorBrewer")) install.packages("RColorBrewer") 
+if (!require("ggplot2")) install.packages("ggplot2") 
+if (!require("ggrepel")) install.packages("ggrepel") 
+if (!require("ggiraph")) install.packages("ggiraph") 
+if (!require("plotly")) install.packages("plotly") 
+
+```
+
+
+## Load packages
+```{r}
+# Load Bioconductor 
+library(Biobase)    # for ExpressionSet object tidyness
+library(CLL)        # for our example dataset, data(sCLLex)
+library(limma)      # for differential expression analysis 
+  
+# Load Util Packages
+library(skimr)
+library(devtools)
+library(dplyr)
+library(RColorBrewer)
+library(ggplot2)
+library(ggrepel)
+library(ggiraph)
+library(plotly)
+
+```
+
+
+# Bioconductor `ExrpessionSet` from [{CLL}](https://bioconductor.org/packages/release/data/experiment/html/CLL.html)
+
+```{r}
+data("sCLLex")
+eset<- sCLLex
+dim(exprs(sCLLex))
+# [1] 12625    22
+summary(pData(sCLLex))
+# SampleID             Disease  
+# Length:22          progres.:14  
+# Class :AsIs        stable  : 8  
+# Mode  :character 
+```
+
+# Creating design matrix for `limma` model 
+
+The outcome or y or predictor variable is the `Disease` status `{stable, progressing}` (binary outcome, aka control case)
+
+```{r}
+# Design matrix
+design <- model.matrix(~Disease  , data = pData(eset)) 
+summary(design)
+ #  (Intercept) Diseasestable   
+ # Min.   :1    Min.   :0.0000  
+ # 1st Qu.:1    1st Qu.:0.0000  
+ # Median :1    Median :0.0000  
+ # Mean   :1    Mean   :0.3636  
+ # 3rd Qu.:1    3rd Qu.:1.0000  
+ # Max.   :1    Max.   :1.0000  
+```
+
+## Sanity checks for design matrix `dim()` and context
+ 
+```{r}
+head(design, 2) 
+colSums(design) 
+skimr::skim(pData(eset))
+```
+
+
+```{r}
+# 2. Fit the coef of the model with lmfit by passing it the ExressionSet object and design matrix
+fit <- limma::lmFit(eset, design)
+
+# # 3. Calculate the t-statistics by passing the fitted model object to eth eBayes function
+eBayes_fit <- limma::eBayes(fit)
+class(eBayes_fit)
+```
+
+
+
+# Overview of significantly down and upregulated features with `decideTests` and `summary()`
+
+```{r}
+# the defaults from limma::decideTests() but explicit always better than implicit
+FDR_threshold   <- 0.05
+logFC_threshold <- 0
+  
+# Call the function limma::decideTests() with the `eBayes_fit` object as input
+Down_NotSig_Up  <- limma::decideTests(
+                                      object        = eBayes_fit,     # class(eBayes_fit): MArrayLM 
+                                      method        = "separate",     # one coeff anyway, "Diseasestable", but check ??
+                                      adjust.method = "BH"          , # Benjamini-Hochberg, adjusting for FDR
+                                      p.value       = FDR_threshold , # family-wise error rate or FDR threshold
+                                      lfc           = 0               # leave as is, default. Else inflation of tests
+                                      )  
+```
+
+## `summary(limma::decideTests(ebayes_fit))`: Counts of down, up or not signif features absed on FDR threshold
+
+```{r}
+cat("Overview of statistically significant features for selected FDR (",FDR_threshold,"), on examined contrast ('stable','progress'):\n\n")
+summary(Down_NotSig_Up)
+
+# and some helper variable to retrieve this in a accessible dataframe:
+summary_signif <- as.data.frame.matrix(t(summary(Down_NotSig_Up)))
+
+cat("\n\nNumber of statistically significant features in total (regardless of direction of change): \n")
+# > rownames(summary_signif)" [1] "(Intercept)"   "Diseasestable"
+nSignif         <- summary_signif["Diseasestable","Down"] + summary_signif["Diseasestable", "Up"]
+nTotalFeatures  <- sum(summary_signif["Diseasestable",])
+cat(nSignif)
+```
+
+
+With FDR set to `r FDR_threshold` (soft-coded to inherit `FDR_threshold` value set above), `r `  differentially regulated features found between patients with `(Disease)stable` and `progres` subject of teh experiment for the examined contrast ()
+
+
+# Table of ~~Top~~ all features from Linear Model Fit  (N = `r nTotalFeatures` features) from `topTable` object
+
+For topTable, `fit`` should be an object of class `MArrayLM`
+as produced by `lmFit` and `eBayes`.
+
+
+```{r}
+topTable_all <- limma::topTable(fit           = eBayes_fit,           #
+                                coef          = "Diseasestable"    ,  # 
+                                number        = dim(exprs(eset))[1],  # maximum features to list. List all
+                                adjust.method = "BH"               ,  # adjust the p-values for multiple testing
+                                p.value       = 1                  ,  # cutoff value for adjusted p-values. Show all
+                                lfc           = 0)                    # cutoff value for log-fold change. Show all
+```
+
+
+## Check for NA in `P.values` and `adj.Pvalues` and replace those with `1`
+```{r}
+#replacing NA p-values
+topTable_all$P.Value[is.na(topTable_all$P.Value)]   <- 1; 
+topTable_all$adj.P.Val[is.na(topTable_all$adj.P.Val)] <- 1;
+```
+
+## Verify `decideResults()` output matches `topTable()` 
+
+`sum(topTable_all$adj.P.Val < FDR_threshold)`: 
+Count how many fetaures have adjusted bH p-value < `r FDR_threshold`
+
+```{r}
+sum(topTable_all$adj.P.Val < FDR_threshold)
+```
+
+
+# Volcano plot prep time - Creating helper variables for in-control `ggplot2` plotting 
+
+HOW:
+```
+0. Use a custom palette
+1. Use the `decideTests()` table 
+ - Store output of `decideTests` in dataframe 
+ - Create helper column `probe`, with same column name as in `toPlot` dataframe (more later on)
+ - Remove `(Intercept)` column by setting to `NULL`
+ - Use the `Diseasestable` column, but first, `as.factor` (ggplot2 loves these thingies)!
+
+2. Map `Diseasestable` factor levels to specific hexcode using `match()`
+
+3. Perform a `dplyr::inner_join()`
+```
+
+## Custom palette
+
+```{r}
+devtools::source_url("https://raw.githubusercontent.com/cgpu/ggmisc/master/web-palette.R")
+webPalette()
+```
+
+
+## Create factor with 3 levels (`Down`, `Up`, `NotSignificant`)
+
+
+- Use the `decideTests()` table 
+   + Store output of `decideTests` in dataframe 
+   + Create helper column `probe`, with same column name as in `toPlot` dataframe (more later on)
+   + Remove `(Intercept)` column by setting to `NULL`
+   + Use the `Diseasestable` column, but first, `as.factor` (ggplot2 loves these thingies)!
+  
+```{r}
+# 1. Store output of `decideTests` in dataframe
+Down_NotSig_Up_dataframe               <- as.data.frame.matrix(Down_NotSig_Up)
+Down_NotSig_Up_dataframe$probe         <-  rownames(Down_NotSig_Up_dataframe)
+Down_NotSig_Up_dataframe$`(Intercept)` <- NULL
+Down_NotSig_Up_dataframe$Diseasestable <- as.factor(Down_NotSig_Up_dataframe$Diseasestable)
+
+levels(Down_NotSig_Up_dataframe$Diseasestable )
+```
+
+
+## Map `Diseasestable` factor levels to specific hexcode from custom palette 
+
+
+
+HOW: using `match()`
+
+```{r}
+my_ggpalette <- c(webPalette("watermelon fail"),
+                  webPalette("cta blue"),
+                  webPalette("grey dark"))
+
+# gem found here at SO: 
+# https://stackoverflow.com/questions/7658316/create-new-column-based-on-4-values-in-another-column
+index  <- levels(Down_NotSig_Up_dataframe$Diseasestable )
+values <- my_ggpalette
+
+Down_NotSig_Up_dataframe$hexcode <- values[match(Down_NotSig_Up_dataframe$Diseasestable, index)]
+head(Down_NotSig_Up_dataframe)
+```
+
+
+- Inspect dataframe and check what variables are missing
+
+```{r}
+toPlot <- topTable_all
+head(topTable_all, 2)
+```
+
+
+## Create helper variable for visualizng small p-values in the positive side of the `y` axis.
+```
+  negative logPvalues `-1* (log10(FDR_threshold))` == `r -1* (log10(FDR_threshold))`
+```
+
+```{r}
+# Negative log10 adjusted p-values
+FDR_threshold_neg_log10 <-  (-1 * (log10(FDR_threshold)))
+toPlot$neg_logPvalues <- -1* (log10(toPlot$adj.P.Val))
+
+cat("Checking by condition:\n")
+cat("sum(toPlot$neg_logPvalues > FDR_threshold_neg_log10 ) :\n")
+cat(sum(toPlot$neg_logPvalues > FDR_threshold_neg_log10 ))
+```
+
+## Create a boolean vector column, significant TRUE/FALSE (binary)
+```{r}
+# Significant boolean vector
+toPlot$significant <- toPlot$neg_logPvalues >= FDR_threshold_neg_log10
+
+
+cat("\n\nVerifying helper variable:\n")
+cat("sum(toPlot$significant == TRUE) :\n")
+cat(sum(toPlot$significant == TRUE))
+```
+
+## Create variable that will facilitate `dplyr::inner_join()` with the `decideTests()` output dataframe
+```{r}
+# Assign rownames (probe ID) to a column
+toPlot$probe <- rownames(toPlot)
+
+cat("\ncolnames(toPlot)\n\n")
+colnames(toPlot)
+```
+
+Inspect dataframe for plotting 
+
+```{r}
+head(toPlot, 4)
+```
+
+```{r}
+skimr::skim(toPlot)
+```
+
+
+# Merge helper variable columns from `decideTests` output to `toPlot` dataframe with `merge()`
+
+To use `merge()` make sure the dataframes:
+
+- have the same rownames
+- (and/or) share the same column
+
+```{r}
+cat("Is it TRUE that the two dataframes have exactly the same rownames (order is not signif):\n")
+cat(setequal(rownames(Down_NotSig_Up_dataframe),rownames(toPlot)))
+```
+
+```{r}
+colnames(Down_NotSig_Up_dataframe)
+```
+
+```{r}
+colnames(toPlot)
+```
+
+
+```{r}
+augmented_toPlot <- merge(Down_NotSig_Up_dataframe, toPlot)
+
+dim(augmented_toPlot)
+head(augmented_toPlot)
+```
+```{r}
+colnames(augmented_toPlot)
+```
+
+```{r}
+lower_custom_legend_label      = "lower"
+not_signif_custom_legend_label = "no diff"
+higher_custom_legend_label     = "higher"
+
+
+minimal_toPlot <- augmented_toPlot[,c("probe", "hexcode", "logFC", "neg_logPvalues", "significant", "Diseasestable")]
+minimal_toPlot$probe         <- as.factor(minimal_toPlot$probe)
+minimal_toPlot$probe         <- as.factor(minimal_toPlot$probe)
+minimal_toPlot$expression_dummy_variable   <- as.numeric(as.character(minimal_toPlot$Diseasestable))
+minimal_toPlot$Diseasestable <- NULL
+
+
+toPlot <- minimal_toPlot[order(minimal_toPlot$expression_dummy_variable),]
+toPlot$expression_dummy_variable <- as.factor(toPlot$expression_dummy_variable)
+
+
+# P0 this is unpredicatble must refactor to map & match color to value of expression column
+index  <- levels(toPlot$expression_dummy_variable )
+values <- c(lower_custom_legend_label, 
+            not_signif_custom_legend_label,
+            higher_custom_legend_label)
+
+toPlot$expression <- values[match(toPlot$expression_dummy_variable, index)]
+toPlot$expression <- as.factor(toPlot$expression)
+toPlot$tooltip    <- toPlot$probe
+# toPlot$expression_dummy_variable <- NULL
+
+head(toPlot)
+```
+# Convert `toPlot` dataframe to  tible using `tibble::tibble(toPlot)`
+
+```{r}
+library(tibble)
+df_ToPlot <- toPlot
+toPlot <- tibble::as_tibble(df_ToPlot)
+head(toPlot)
+class(toPlot)
+```
+
+
+# Time for `ggplot2` 
+
+```{r}
+# Cutoff values for dashed lines
+neg_logPvalue_threshold   <-  ((-1 * log10(FDR_threshold)))  
+logFC_signif_cutoff       <- 1.5
+
+# Creating helper variables for an airy plot, wide and centered plot
+x_absolut_extremum        <- max(abs(toPlot$logFC))
+x_absolut_extremum_wider  <- x_absolut_extremum * 1.65
+
+y_absolut_extremum        <- max(abs(toPlot$neg_logPvalues))
+y_absolut_extremum_wider  <- y_absolut_extremum * 1.15
+
+ggtitle_custom            <- paste0("Volcano plot for genes in {CLL} ExpressionSet")
+ggsubtitle_custom         <- paste0( nSignif, " features of ", nTotalFeatures, " found statistically significant, ( FDR =  ", FDR_threshold, ", BH adjustment)")
+ggcaption_custom          <- paste0("logFoldChange signif cutoff: "  , logFC_signif_cutoff, "\n", 
+                                    "- log AdjPvalue signif cutoff: ", round(neg_logPvalue_threshold, 2))
+
+# Custom colours
+ggtitle_custom_color       <- "#4A637B" # webPalette("grey dark")
+ggsubtitle_custom_color    <- "#A9BACA" # webPalette("grey medium")
+dashed_line_color          <- "#990000" # wine red
+dashed_line_colour         <- "#990000" # wine red
+scale_color_manual_palette <- c("#0198F5","#FA5E5B",  "#4A637B") 
+
+
+x_axis_ticks_count = 10
+y_axis_ticks_count = 10
+  
+
+
+
+# Start building gglayers of plotness
+p<-ggplot() +   theme_gray()+
+  geom_point(data    = toPlot, 
+             mapping = aes(x       = logFC, 
+                           y       = neg_logPvalues,
+                           shape   = significant,
+                           size    = significant,
+                           color   = expression,
+                           label   = probe,
+                           tooltip = tooltip),
+             alpha = 0.70)   +
+  
+  # Control legend block that shows first, here we choose 1, aka top position
+  guides(color = guide_legend(order = 1)) +
+  
+  scale_color_manual(values  = scale_color_manual_palette ) +
+
+  # geom_text_repel(aes(label = probe)) +
+     
+  xlab('logFoldChanges') +
+  ylab('-log10(adjPValue)')      +
+  
+
+  # Set explicitly x axis ticks:https://stackoverflow.com/questions/11335836/increase-number-of-axis-ticks
+  scale_x_continuous(breaks = pretty(toPlot$logFC         , n = x_axis_ticks_count)) +
+  
+  # Set ylim based on absolut extremum for achieving a centered volcano plot  
+   ylim(0, y_absolut_extremum_wider)    +
+
+  # Setting annotation for title, subtitle, caption
+  labs(title      = ggtitle_custom,
+       subtitle   = ggsubtitle_custom,
+       caption    = ggcaption_custom)   +
+  
+  # Controlling font, colour and size of labs. Also centering with hjust 
+  theme(
+  plot.title    = element_text(color = ggtitle_custom_color, size = 16, face = "bold", hjust = 0.5),
+  plot.subtitle = element_text(color = ggsubtitle_custom_color, size = 12             , hjust = 0.5),
+  plot.caption  = element_text(color = ggsubtitle_custom_color, face = "italic")) +
+  
+
+  geom_text_repel(data      = subset(toPlot, significant == TRUE ), 
+                  mapping   = (aes(x     = logFC,
+                                   y     = neg_logPvalues,
+                                   label = probe))) +
+  
+  geom_hline(yintercept =  neg_logPvalue_threshold     ,  colour= dashed_line_colour, linetype="dashed") + 
+  geom_vline(xintercept =        logFC_signif_cutoff   ,  colour= dashed_line_colour, linetype="dashed") + 
+  geom_vline(xintercept =  (-1 * logFC_signif_cutoff ) ,  colour= dashed_line_colour, linetype="dashed") 
+  
+# Add shadowing for double-filtering criterion, both stat signif adj.Pvalue and stat signif UPregulated
+p <- p +  annotate ("rect", 
+                    xmin = logFC_signif_cutoff, 
+                    xmax = Inf, 
+                    ymin = neg_logPvalue_threshold, 
+                    ymax = Inf, alpha = .2) 
+
+# Add another shadowing for double-filtering criterion, both stat signif adj.Pvalue and stat signif DOWNregulated
+p <- p +  annotate ("rect", 
+                    xmin = -logFC_signif_cutoff, 
+                    xmax = -Inf, 
+                    ymin = neg_logPvalue_threshold, 
+                    ymax = Inf, alpha = .2)
+
+htmlwidgets::saveWidget(ggplotly(p), file = "plotly_volcano.html")
+```
+
