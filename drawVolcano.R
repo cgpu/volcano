@@ -6,7 +6,7 @@
 #' @keywords interactiveVolcano
 #' @export
 #' @examples 
-#' drawVolcano(toPlot, SAVEDIR = "my/fav/dir/" , FILENAM)
+#' drawVolcano(toPlot, SAVEDIR = "my/fav/dir/" , FILENAME)
 
 
 
