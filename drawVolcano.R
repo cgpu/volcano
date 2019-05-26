@@ -32,8 +32,8 @@ drawVolcano <- function(    toPLot                  =  toPLot ,
                             xlab_custom             = 'logFoldChanges', 
                             ylab_custom             = '-log10(adjPValue)', 
 
-                            ggtitle_custom          = paste0("Volcano plot for genes in {CLL} ExpressionSet")
-                            ggsubtitle_custom       = paste0( nSignif, " features of ", nTotalFeatures, " found statistically significant, ( FDR =  ", FDR_threshold, ", ", FDR_correction, " adjustment)")
+                            ggtitle_custom          = paste0("Volcano plot for genes in {CLL} ExpressionSet"),
+                            ggsubtitle_custom       = paste0( nSignif, " features of ", nTotalFeatures, " found statistically significant, ( FDR =  ", FDR_threshold, ", ", FDR_correction, " adjustment)"),
                             ggcaption_custom        = paste0("logFoldChange signif cutoff: "  , logFC_signif_cutoff, "\n",  "- log AdjPvalue signif cutoff: ", round(neg_logPvalue_threshold, 2)), 
 
                             ggtitle_custom_color    = ggtitle_custom_color   ,
